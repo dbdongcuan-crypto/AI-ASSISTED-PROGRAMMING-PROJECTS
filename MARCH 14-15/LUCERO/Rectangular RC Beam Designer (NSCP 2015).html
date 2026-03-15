@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSCP 2015 Rectangular Beam Design</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        h1 {
+            width: 100%;
+            text-align: center;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .input-section, .output-section {
+            flex: 1;
+            min-width: 300px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        .results-box {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 4px;
+            border-left: 4px solid #3498db;
+            margin-bottom: 20px;
+        }
+        .results-box p {
+            margin: 8px 0;
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            background: #fff;
+            border: 1px dashed #bdc3c7;
+            border-radius: 4px;
+        }
+        .error {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>NSCP 2015 Rectangular Beam Designer</h1>
+    
+    <div class="input-section">
+        <h3>Input Parameters</h3>
+        <div class="form-group">
+            <label>Factored Moment, Mu (kN·m):</label>
+            <input type="number" id="mu" value="150" step="any">
+        </div>
+        <div class="form-group">
+            <label>Concrete Strength, f'c (MPa):</label>
+            <input type="number" id="fc" value="28" step="any">
+        </div>
+        <div class="form-group">
+            <label>Yield Strength of Steel, fy (MPa):</label>
+            <input type="number" id="fy" value="414" step="any">
+        </div>
+        <div class="form-group">
+            <label>Beam Width, b (mm):</label>
+            <input type="number" id="b" value="250" step="any">
+        </div>
+        <div class="form-group">
+            <label>Total Height, h (mm):</label>
+            <input type="number" id="h" value="450" step="any">
+        </div>
+        <div class="form-group">
+            <label>Effective Depth, d (mm):</label>
+            <input type="number" id="d" value="380" step="any">
+        </div>
+        <div class="form-group">
+            <label>Rebar Diameter (mm):</label>
+            <input type="number" id="db" value="20" step="any">
+        </div>
+        <button onclick="calculateDesign()">Calculate & Visualize</button>
+    </div>
+
+    <div class="output-section">
+        <h3>Calculation Results</h3>
+        <div class="results-box" id="results">
+            <p>Enter values and click calculate.</p>
+        </div>
+        <h3>Cross-Section Visualization</h3>
+        <canvas id="beamCanvas" width="350" height="400"></canvas>
+    </div>
+</div>
+
+<script>
+    function calculateDesign() {
+        // 1. Get Inputs
+        const Mu = parseFloat(document.getElementById('mu').value) * 1e6; // Convert kN-m to N-mm
+        const fc = parseFloat(document.getElementById('fc').value);
+        const fy = parseFloat(document.getElementById('fy').value);
+        const b = parseFloat(document.getElementById('b').value);
+        const h = parseFloat(document.getElementById('h').value);
+        const d = parseFloat(document.getElementById('d').value);
+        const db = parseFloat(document.getElementById('db').value);
+        
+        const resultsDiv = document.getElementById('results');
+        
+        // 2. Constants and Assumptions (Singly Reinforced)
+        const phi = 0.90; // Assuming tension-controlled initially
+        
+        // 3. Calculate Required Rho
+        const Rn = Mu / (phi * b * Math.pow(d, 2));
+        const discriminant = 1 - (2 * Rn) / (0.85 * fc);
+        
+        if (discriminant < 0) {
+            resultsDiv.innerHTML = `<p class="error">Error: Section requires compression reinforcement (Doubly Reinforced). Increase dimensions or f'c.</p>`;
+            drawBeam(b, h, d, db, 0);
+            return;
+        }
+        
+        const rhoRequired = (0.85 * fc / fy) * (1 - Math.sqrt(discriminant));
+        
+        // 4. Calculate As
+        let As = rhoRequired * b * d;
+        
+        // 5. Check Minimum As (NSCP 2015 409.6.1.2)
+        const AsMin1 = (0.25 * Math.sqrt(fc) / fy) * b * d;
+        const AsMin2 = (1.4 / fy) * b * d;
+        const AsMin = Math.max(AsMin1, AsMin2);
+        
+        let controllingCondition = "Calculated Required";
+        if (As < AsMin) {
+            As = AsMin;
+            controllingCondition = "Minimum Reinforcement (NSCP 409.6.1.2)";
+        }
+        
+        // 6. Strain Check (Tension-controlled verification)
+        // Beta1 calculation (NSCP 422.2.2.4.3)
+        let beta1 = 0.85;
+        if (fc > 28) {
+            beta1 = 0.85 - 0.05 * ((fc - 28) / 7);
+            if (beta1 < 0.65) beta1 = 0.65;
+        }
+        
+        const a = (As * fy) / (0.85 * fc * b);
+        const c = a / beta1;
+        const strain_t = 0.003 * ((d - c) / c);
+        
+        let strainMessage = `<span style="color: green;">Tension-controlled (φ = 0.90 applies)</span>`;
+        if (strain_t < 0.005) {
+            strainMessage = `<span class="error">Transition/Compression controlled! εt = ${strain_t.toFixed(4)}. Redesign section.</span>`;
+        }
+
+        // 7. Calculate number of bars
+        const Ab = (Math.PI / 4) * Math.pow(db, 2);
+        let nBars = Math.ceil(As / Ab);
+        if (nBars < 2) nBars = 2; // Practical minimum for a rectangular beam
+        
+        const AsProvided = nBars * Ab;
+
+        // 8. Display Results
+        resultsDiv.innerHTML = `
+            <p><strong>Required As:</strong> ${As.toFixed(2)} mm² (${controllingCondition})</p>
+            <p><strong>Minimum As:</strong> ${AsMin.toFixed(2)} mm²</p>
+            <p><strong>Steel Strain (εt):</strong> ${strain_t.toFixed(5)} - ${strainMessage}</p>
+            <p><strong>Provided Bars:</strong> ${nBars} - Ø${db}mm</p>
+            <p><strong>Provided As:</strong> ${AsProvided.toFixed(2)} mm²</p>
+            <p><strong>Neutral Axis (c):</strong> ${c.toFixed(2)} mm</p>
+        `;
+        
+        // 9. Draw Beam
+        drawBeam(b, h, d, db, nBars);
+    }
+
+    function drawBeam(b, h, d, db, nBars) {
+        const canvas = document.getElementById('beamCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Drawing scaling factors to fit inside the canvas
+        const scale = Math.min((canvas.width - 100) / b, (canvas.height - 100) / h);
+        const drawW = b * scale;
+        const drawH = h * scale;
+        
+        // Center the drawing
+        const offsetX = (canvas.width - drawW) / 2;
+        const offsetY = (canvas.height - drawH) / 2 - 10;
+
+        // Draw Concrete Section (Rectangle)
+        ctx.beginPath();
+        ctx.rect(offsetX, offsetY, drawW, drawH);
+        ctx.fillStyle = '#e0e0e0';
+        ctx.fill();
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        if (nBars > 0) {
+            // Rebar drawing math
+            const coverBottom = (h - d) * scale;
+            const drawDb = db * scale;
+            const rebarY = offsetY + drawH - coverBottom;
+            
+            // Stirrup allowance & spacing
+            const sideCover = 40 * scale; // Assuming 40mm clear cover to stirrups roughly
+            const availableWidth = drawW - (2 * sideCover) - drawDb;
+            let spacing = 0;
+            if (nBars > 1) spacing = availableWidth / (nBars - 1);
+
+            // Draw Rebars
+            ctx.fillStyle = '#2c3e50';
+            for (let i = 0; i < nBars; i++) {
+                const rebarX = offsetX + sideCover + (drawDb / 2) + (i * spacing);
+                ctx.beginPath();
+                ctx.arc(rebarX, rebarY, drawDb / 2, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            // Draw Effective Depth Line
+            ctx.beginPath();
+            ctx.setLineDash([5, 5]);
+            ctx.moveTo(offsetX - 20, offsetY);
+            ctx.lineTo(offsetX + drawW + 20, offsetY);
+            ctx.moveTo(offsetX - 20, rebarY);
+            ctx.lineTo(offsetX + drawW + 20, rebarY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Text annotations
+            ctx.fillStyle = '#c0392b';
+            ctx.font = '14px sans-serif';
+            ctx.fillText(`b = ${b} mm`, offsetX + drawW/2 - 30, offsetY - 15);
+            ctx.fillText(`h = ${h} mm`, offsetX + drawW + 15, offsetY + drawH/2);
+            ctx.fillText(`d = ${d} mm`, offsetX - 70, offsetY + (rebarY - offsetY)/2);
+            ctx.fillText(`${nBars} - Ø${db}mm`, offsetX + drawW/2 - 40, offsetY + drawH + 30);
+        }
+    }
+
+    // Run once on load
+    window.onload = calculateDesign;
+</script>
+
+</body>
+</html>
